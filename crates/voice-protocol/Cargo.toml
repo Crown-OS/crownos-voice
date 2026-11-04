@@ -1,0 +1,17 @@
+[package]
+name = "crownos-voice-protocol"
+description = "Control protocol of crown-voiced, the CrownOS voice enhancement service"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "voice_protocol"
+
+[dependencies]
+crownos-ipc.workspace = true
+serde.workspace = true
+
+[lints]
+workspace = true

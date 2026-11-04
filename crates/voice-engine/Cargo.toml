@@ -1,0 +1,20 @@
+[package]
+name = "crownos-voice-engine"
+description = "Allocation-free voice DSP shared by crown-voiced and its enhancement backends"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "voice_engine"
+
+[features]
+host = ["voice-abi/host"]
+
+[dependencies]
+voice-abi.workspace = true
+realfft = "3.5.1"
+
+[lints]
+workspace = true

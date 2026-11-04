@@ -1,0 +1,16 @@
+[package]
+name = "crownos-voice-backend-passthrough"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "voice_passthrough"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+voice-abi.workspace = true
+
+[lints]
+workspace = true

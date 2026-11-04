@@ -1,0 +1,67 @@
+# Maintainer: marvelxcodes <ramakrishnan0046@gmail.com>
+#
+# Builds the checkout this file lives in, so run makepkg from packaging/ with the
+# sibling path dependencies (../crownos-ipc, ../crownos-config, ../vendor) checked
+# out next to the repository, as .github/workflows/package.yml does.
+#
+# The DeepFilterNet3 archive is pinned to the same URL and checksum as
+# fetch-models.sh; prepare() fails if the two drift apart.
+
+pkgbase=crownos-voice
+pkgname=(crownos-voice crownos-voice-onnx)
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="CrownOS voice enhancement service"
+arch=(x86_64)
+url="https://github.com/Crown-OS/crownos-voice"
+license=('MIT OR Apache-2.0')
+makedepends=(cargo clang pipewire)
+options=(!lto !debug)
+
+_deepfilternet_version=0.5.6
+_deepfilternet_sha256=c94d91f70911001c946e0fabb4aa9adc37045f45a03b56008cb0c8244cb63616
+source=("deepfilternet3-onnx-$_deepfilternet_version.tar.gz::https://github.com/Rikorose/DeepFilterNet/raw/v$_deepfilternet_version/models/DeepFilterNet3_onnx.tar.gz")
+sha256sums=("$_deepfilternet_sha256")
+
+_workspace="$startdir/.."
+_model_files=(enc.onnx erb_dec.onnx df_dec.onnx config.ini)
+
+prepare() {
+  grep -q "$_deepfilternet_sha256" "$startdir/fetch-models.sh" ||
+    { echo "fetch-models.sh pins a different DeepFilterNet3 archive" >&2; return 1; }
+  cd "$_workspace"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/^host: //p')"
+}
+
+build() {
+  cd "$_workspace"
+  export RUSTUP_TOOLCHAIN=stable CARGO_TARGET_DIR="$srcdir/target"
+  cargo build --release --frozen \
+    -p crown-voiced -p crownos-voice-backend-cpu -p crownos-voice-backend-onnx
+}
+
+package_crownos-voice() {
+  pkgdesc="CrownOS voice enhancement service with the CPU backend"
+  depends=(pipewire glibc gcc-libs)
+  install=crownos-voice.install
+
+  install -Dm755 "$srcdir/target/release/crown-voiced" -t "$pkgdir/usr/bin"
+  install -Dm755 "$srcdir/target/release/libvoice_cpu.so" -t "$pkgdir/usr/lib/crownos/voice/backends"
+  install -Dm644 "$startdir/crown-voiced.socket" "$startdir/crown-voiced.service" \
+    -t "$pkgdir/usr/lib/systemd/user"
+  install -Dm644 "$startdir/90-crown-voiced.preset" -t "$pkgdir/usr/lib/systemd/user-preset"
+}
+
+package_crownos-voice-onnx() {
+  pkgdesc="ONNX Runtime backend and DeepFilterNet3 models for the CrownOS voice enhancement service"
+  depends=("crownos-voice=$pkgver-$pkgrel" onnxruntime-crownos glibc gcc-libs)
+  optdepends=('onnxruntime-crownos-cuda: NVIDIA CUDA acceleration'
+              'onnxruntime-crownos-migraphx: AMD MIGraphX acceleration'
+              'onnxruntime-crownos-openvino: Intel OpenVINO acceleration'
+              'onnxruntime-crownos-vitisai: AMD Vitis AI NPU acceleration')
+
+  install -Dm755 "$srcdir/target/release/libvoice_onnx.so" -t "$pkgdir/usr/lib/crownos/voice/backends"
+  install -Dm644 "${_model_files[@]/#/$srcdir/tmp/export/}" \
+    -t "$pkgdir/usr/share/crownos/voice/models/deepfilternet3"
+}

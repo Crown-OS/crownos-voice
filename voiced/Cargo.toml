@@ -1,0 +1,26 @@
+[package]
+name = "crown-voiced"
+description = "CrownOS voice enhancement service: enhanced PipeWire microphones and offline PCM enhancement"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+voice-abi = { workspace = true, features = ["host"] }
+voice-protocol.workspace = true
+voice-engine = { workspace = true, features = ["host"] }
+crownos-ipc.workspace = true
+crownos-config = { path = "../../crownos-config", default-features = false }
+anyhow.workspace = true
+thiserror.workspace = true
+log.workspace = true
+env_logger.workspace = true
+pipewire = { workspace = true, features = ["v1_2_0"] }
+rtrb.workspace = true
+serde.workspace = true
+ron = "0.12"
+rustix = { version = "1.1", default-features = false, features = ["std", "event"] }
+
+[lints]
+workspace = true

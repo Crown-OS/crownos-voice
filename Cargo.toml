@@ -1,0 +1,43 @@
+[workspace]
+resolver = "3"
+members = [
+  "crates/voice-abi",
+  "crates/voice-protocol",
+  "crates/voice-engine",
+  "backends/cpu",
+  "backends/onnx",
+  "backends/passthrough",
+  "voiced",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Crown-OS/crownos-voice"
+
+[workspace.lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+dbg_macro = "warn"
+todo = "warn"
+
+[workspace.dependencies]
+voice-abi = { package = "crownos-voice-abi", path = "crates/voice-abi" }
+voice-protocol = { package = "crownos-voice-protocol", path = "crates/voice-protocol" }
+voice-engine = { package = "crownos-voice-engine", path = "crates/voice-engine" }
+crownos-ipc = { path = "../crownos-ipc" }
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+libloading = "0.8"
+rtrb = "0.3.5"
+pipewire = "0.10.1"
+log = "0.4"
+env_logger = "0.11"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

@@ -1,0 +1,24 @@
+[package]
+name = "crownos-voice-backend-onnx"
+description = "ONNX Runtime enhancement backend: offline DeepFilterNet3 on TensorRT, CUDA, MIGraphX, OpenVINO, Vitis AI or CPU"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "voice_onnx"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+voice-abi.workspace = true
+voice-engine.workspace = true
+libloading = "0.9"
+ort = { version = "=2.0.0-rc.12", default-features = false, features = ["load-dynamic", "api-18"] }
+
+[dev-dependencies]
+deep-filter-rt = "0.1.1"
+ndarray = "0.17"
+
+[lints]
+workspace = true

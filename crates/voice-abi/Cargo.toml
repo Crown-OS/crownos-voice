@@ -1,0 +1,20 @@
+[package]
+name = "crownos-voice-abi"
+description = "C ABI shared by crown-voiced and its on-demand enhancement backend plugins"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "voice_abi"
+
+[features]
+host = ["dep:libloading"]
+
+[dependencies]
+thiserror.workspace = true
+libloading = { workspace = true, optional = true }
+
+[lints]
+workspace = true

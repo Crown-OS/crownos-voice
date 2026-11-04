@@ -1,0 +1,11 @@
+[Unit]
+Description=CrownOS voice enhancement socket
+Documentation=https://github.com/Crown-OS/crownos-voice
+
+[Socket]
+ListenStream=%t/crownos/crownos-voice.sock
+SocketMode=0600
+DirectoryMode=0700
+
+[Install]
+WantedBy=sockets.target

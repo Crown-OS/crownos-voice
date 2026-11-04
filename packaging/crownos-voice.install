@@ -1,0 +1,7 @@
+post_install() {
+  systemctl --global preset crown-voiced.socket
+}
+
+pre_remove() {
+  systemctl --global disable crown-voiced.socket
+}

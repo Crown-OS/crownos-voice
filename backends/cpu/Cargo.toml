@@ -1,0 +1,24 @@
+[package]
+name = "crownos-voice-backend-cpu"
+description = "CPU enhancement backend: RNNoise (light) and DeepFilterNet3 on tract (standard, studio)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "voice_cpu"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+voice-abi.workspace = true
+nnnoiseless = { version = "0.5.2", default-features = false }
+deep-filter-rt = "0.1.1"
+ndarray = "0.17"
+
+[dev-dependencies]
+voice-engine.workspace = true
+tract-onnx = "0.23.9"
+
+[lints]
+workspace = true
