@@ -51,6 +51,7 @@ package_crownos-voice() {
   install -Dm644 "$startdir/crown-voiced.socket" "$startdir/crown-voiced.service" \
     -t "$pkgdir/usr/lib/systemd/user"
   install -Dm644 "$startdir/90-crown-voiced.preset" -t "$pkgdir/usr/lib/systemd/user-preset"
+  install -Dm644 "$_workspace"/LICENSE-{MIT,APACHE} -t "$pkgdir/usr/share/licenses/$pkgname"
 }
 
 package_crownos-voice-onnx() {
@@ -64,4 +65,5 @@ package_crownos-voice-onnx() {
   install -Dm755 "$srcdir/target/release/libvoice_onnx.so" -t "$pkgdir/usr/lib/crownos/voice/backends"
   install -Dm644 "${_model_files[@]/#/$srcdir/tmp/export/}" \
     -t "$pkgdir/usr/share/crownos/voice/models/deepfilternet3"
+  install -Dm644 "$_workspace"/LICENSE-{MIT,APACHE} -t "$pkgdir/usr/share/licenses/$pkgname"
 }
