@@ -1,0 +1,70 @@
+# Runs the enhancement backends for real: ONNX Runtime from the Arch repositories, the pinned
+# DeepFilterNet3 export from packaging/fetch-models.sh, and offline jobs through crown-voiced on
+# the built plugins, then a live stream on a headless PipeWire. Runners have no GPU, so only ONNX
+# Runtime's CPU execution provider runs.
+name: Integration
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: integration-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+  CROWN_CONFIG_DIR: /tmp/crownos-ci
+
+jobs:
+  backends:
+    name: live backends
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ github.event.repository.name }}
+    steps:
+      - uses: Crown-OS/.github/.github/actions/prepare-workspace@main
+        with:
+          packages: pipewire pipewire-audio wireplumber onnxruntime-cpu
+          toolchain: 1.97.1
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ github.event.repository.name }}
+
+      - name: ONNX Runtime
+        run: |
+          pacman -Si onnxruntime-cpu | grep -E '^(Name|Version|Provides)'
+          ls -l /usr/lib/libonnxruntime*.so*
+
+      - name: Fetch DeepFilterNet3
+        run: |
+          sh packaging/fetch-models.sh "$RUNNER_TEMP/models"
+          echo "CROWN_VOICE_MODELS=$RUNNER_TEMP/models" >> "$GITHUB_ENV"
+          echo "DFN_MODELS_DIR=$RUNNER_TEMP/models/deepfilternet3" >> "$GITHUB_ENV"
+
+      - name: ONNX backend on ONNX Runtime
+        run: >-
+          cargo test --release --locked -p crownos-voice-backend-onnx --
+          --ignored --nocapture --test-threads=1
+
+      - name: Offline jobs through crown-voiced
+        run: >-
+          cargo test --release --locked -p crown-voiced --test real_backends --
+          --ignored --nocapture
+
+      - name: Live stream on a headless PipeWire
+        run: |
+          cargo build --release --locked -p crown-voiced --bin crown-voiced --example open_stream
+          cargo build --release --locked -p crownos-voice-backend-cpu
+          dbus-run-session -- .github/scripts/live-stream.sh "$PWD/target/release" "$RUNNER_TEMP/live"
