@@ -8,15 +8,26 @@ pub struct SourceNode {
     pub priority: i32,
 }
 
-/// The default source, or the highest-priority other source when the default is an enhanced node.
-pub fn capture_target<'a>(default: Option<&'a str>, sources: &'a [SourceNode]) -> Option<&'a str> {
-    default.filter(|name| !is_enhanced_node(name)).or_else(|| {
+/// The first listed default that is a real, present source, else the highest-priority real source.
+pub fn capture_target<'a>(
+    defaults: &[Option<&'a str>],
+    sources: &'a [SourceNode],
+) -> Option<&'a str> {
+    let real_sources = || {
         sources
             .iter()
             .filter(|source| !is_enhanced_node(&source.name))
-            .max_by_key(|source| source.priority)
-            .map(|source| source.name.as_str())
-    })
+    };
+    defaults
+        .iter()
+        .flatten()
+        .copied()
+        .find(|&name| real_sources().any(|source| source.name == name))
+        .or_else(|| {
+            real_sources()
+                .max_by_key(|source| source.priority)
+                .map(|source| source.name.as_str())
+        })
 }
 
 /// Whether `name` is a node this service created.
@@ -25,17 +36,10 @@ pub fn is_enhanced_node(name: &str) -> bool {
         .is_some_and(|rest| rest.starts_with('.'))
 }
 
-/// The node name in a `default.audio.source` metadata value, `{"name":"alsa_input.usb"}`.
-pub fn metadata_node_name(value: &str) -> Option<&str> {
-    let (_, after_key) = value.split_once("\"name\"")?;
-    let quoted = after_key.trim_start().strip_prefix(':')?.trim_start();
-    let (name, _) = quoted.strip_prefix('"')?.split_once('"')?;
-    Some(name)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::live::ALL_APPS_NODE;
 
     fn sources() -> Vec<SourceNode> {
         [
@@ -54,7 +58,29 @@ mod tests {
     #[test]
     fn keeps_a_real_default_source() {
         assert_eq!(
-            capture_target(Some("alsa_input.pci-webcam"), &sources()),
+            capture_target(&[Some("alsa_input.pci-webcam")], &sources()),
+            Some("alsa_input.pci-webcam")
+        );
+    }
+
+    #[test]
+    fn prefers_the_configured_source_over_the_effective_one() {
+        assert_eq!(
+            capture_target(
+                &[Some("alsa_input.pci-webcam"), Some("alsa_input.usb-mic")],
+                &sources()
+            ),
+            Some("alsa_input.pci-webcam")
+        );
+    }
+
+    #[test]
+    fn skips_a_configured_source_that_is_unplugged() {
+        assert_eq!(
+            capture_target(
+                &[Some("alsa_input.unplugged"), Some("alsa_input.pci-webcam")],
+                &sources()
+            ),
             Some("alsa_input.pci-webcam")
         );
     }
@@ -63,10 +89,13 @@ mod tests {
     fn never_captures_from_an_enhanced_node() {
         let sources = sources();
         assert_eq!(
-            capture_target(Some("crownos-voice.4242.1"), &sources),
+            capture_target(&[Some("crownos-voice.4242.1")], &sources),
             Some("alsa_input.usb-mic")
         );
-        assert_eq!(capture_target(None, &sources), Some("alsa_input.usb-mic"));
+        assert_eq!(
+            capture_target(&[None], &sources),
+            Some("alsa_input.usb-mic")
+        );
     }
 
     #[test]
@@ -76,7 +105,7 @@ mod tests {
             priority: 1,
         }];
         assert_eq!(
-            capture_target(Some("crownos-voice.1.1"), &only_enhanced),
+            capture_target(&[Some("crownos-voice.1.1")], &only_enhanced),
             None
         );
     }
@@ -84,17 +113,8 @@ mod tests {
     #[test]
     fn recognises_only_this_services_nodes() {
         assert!(is_enhanced_node("crownos-voice.4242.1"));
+        assert!(is_enhanced_node(ALL_APPS_NODE));
         assert!(!is_enhanced_node("crownos-voice-capture"));
         assert!(!is_enhanced_node("alsa_input.usb-mic"));
-    }
-
-    #[test]
-    fn reads_the_name_from_default_metadata() {
-        assert_eq!(
-            metadata_node_name(r#"{"name":"alsa_input.pci-0000_06_00.6.analog-stereo"}"#),
-            Some("alsa_input.pci-0000_06_00.6.analog-stereo")
-        );
-        assert_eq!(metadata_node_name(r#"{ "name" : "mic" }"#), Some("mic"));
-        assert_eq!(metadata_node_name("{}"), None);
     }
 }

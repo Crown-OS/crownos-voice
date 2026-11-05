@@ -15,6 +15,8 @@ pub const NO_BACKEND: &str = "no voice backend can run this";
 pub enum SwitchCause {
     Requested(ReplyTo),
     Demotion,
+    /// The `voice` settings changed the enhancement or the allowed backends.
+    Settings,
 }
 
 /// A backend instance created for a running stream, ready to swap in.

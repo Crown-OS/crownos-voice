@@ -43,11 +43,17 @@ pub struct BackendInfo {
     pub loaded: bool,
 }
 
+/// New fields only ever go last: postcard ignores trailing bytes, so older clients still decode it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ServiceStatus {
     pub backends: Vec<BackendInfo>,
     pub streams: u32,
     pub jobs: u32,
+    /// [`BackendInfo::name`] of the backend a new live stream would run on, under the current
+    /// backend setting; `None` when no installed backend may run one.
+    pub realtime_backend: Option<String>,
+    /// [`BackendInfo::name`] of the backend a new offline job would run on.
+    pub offline_backend: Option<String>,
 }
 
 crownos_ipc::protocol! {
@@ -66,5 +72,47 @@ crownos_ipc::protocol! {
         event StreamChanged { node: EnhancedNode };
         /// An offline job stopped early; its `output` pipe is closed.
         event JobFailed { job: JobId, reason: String };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crownos_ipc::postcard;
+
+    #[derive(Debug, PartialEq, Deserialize)]
+    struct StatusBeforeSelection {
+        backends: Vec<BackendInfo>,
+        streams: u32,
+        jobs: u32,
+    }
+
+    #[test]
+    fn older_clients_still_read_the_status() -> Result<(), postcard::Error> {
+        let backend = BackendInfo {
+            name: "cpu".into(),
+            device: "DeepFilterNet3".into(),
+            realtime_score: 50,
+            offline_score: 40,
+            loaded: true,
+        };
+        let status = ServiceStatus {
+            backends: vec![backend.clone()],
+            streams: 1,
+            jobs: 0,
+            realtime_backend: Some("cpu".into()),
+            offline_backend: None,
+        };
+        let bytes = postcard::to_stdvec(&status)?;
+        assert_eq!(
+            postcard::from_bytes::<StatusBeforeSelection>(&bytes)?,
+            StatusBeforeSelection {
+                backends: vec![backend],
+                streams: 1,
+                jobs: 0,
+            }
+        );
+        assert_eq!(postcard::from_bytes::<ServiceStatus>(&bytes)?, status);
+        Ok(())
     }
 }

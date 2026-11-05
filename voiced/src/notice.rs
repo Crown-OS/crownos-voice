@@ -5,6 +5,7 @@ use std::os::fd::{AsFd, BorrowedFd};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
+use crownos_config::schema::Voice;
 use voice_protocol::{JobId, StreamId};
 
 use crate::deferred::ReplyTo;
@@ -17,9 +18,10 @@ pub enum Notice {
     DeadlinesMissed(StreamId),
     /// An offline job stopped; `failure` is set when it did not finish cleanly.
     JobEnded { job: JobId, failure: Option<String> },
-    /// `open_stream` finished creating the backend instance and the PipeWire nodes.
+    /// A stream finished creating its backend instance and PipeWire nodes; `reply` is `None`
+    /// for the all-apps microphone.
     StreamOpened {
-        reply: ReplyTo,
+        reply: Option<ReplyTo>,
         opened: Result<LiveStream, String>,
     },
     /// A new backend instance for a live stream is ready.
@@ -28,6 +30,8 @@ pub enum Notice {
         cause: SwitchCause,
         switched: Result<BackendSwitch, String>,
     },
+    /// `voice.ron` was edited.
+    SettingsChanged(Voice),
 }
 
 /// Cloneable sender that also wakes the IPC loop's `poll`.

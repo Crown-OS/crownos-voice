@@ -62,6 +62,7 @@ fn start_daemon(test: &str) -> anyhow::Result<RunningDaemon> {
         .env("CROWN_VOICE_BACKENDS", &backends)
         .env("CROWN_VOICE_MODELS", root.join("models"))
         .env("XDG_CACHE_HOME", root.join("cache"))
+        .env("CROWN_CONFIG_DIR", root.join("config"))
         .env("RUST_LOG", "warn")
         .env_remove("LISTEN_PID")
         .spawn()?;

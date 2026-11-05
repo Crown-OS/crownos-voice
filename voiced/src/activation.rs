@@ -5,6 +5,15 @@ use std::os::unix::net::UnixListener;
 
 const LISTEN_FDS_START: RawFd = 3;
 
+/// Who started the service.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Launch {
+    /// systemd, at login or for a client connecting to the socket.
+    Systemd,
+    /// Someone running the binary directly.
+    Manual,
+}
+
 /// The listening socket systemd passed in, if this process was socket-activated.
 pub fn inherited_listener() -> Option<UnixListener> {
     let listen_pid: u32 = std::env::var("LISTEN_PID").ok()?.parse().ok()?;

@@ -1,6 +1,6 @@
-//! Reads the default source and every `Audio/Source` node from a connected PipeWire core.
+//! Reads the default sources and every `Audio/Source` node from a connected PipeWire core.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use pipewire as pw;
@@ -8,25 +8,45 @@ use pw::core::{Core, PW_ID_CORE};
 use pw::main_loop::MainLoopRc;
 use pw::metadata::Metadata;
 use pw::properties::PropertiesBox;
-use pw::registry::GlobalObject;
+use pw::registry::{GlobalObject, Registry};
 use pw::types::ObjectType;
 
-use super::capture_target::{SourceNode, capture_target, metadata_node_name};
+use super::capture_target::{SourceNode, capture_target};
+use super::default_metadata::{
+    CONFIGURED_SOURCE_KEY, DEFAULT_METADATA, DEFAULT_SOURCE_KEY, metadata_node_name,
+};
+use super::roundtrip::roundtrip;
 
 const SOURCE_CLASS: &str = "Audio/Source";
 const METADATA_NAME_KEY: &str = "metadata.name";
-const DEFAULT_METADATA: &str = "default";
-const DEFAULT_SOURCE_KEY: &str = "default.audio.source";
 
-/// The real microphone to pin a stream to when the client asked for the default source.
-pub fn resolve_capture_target(
+/// The sources PipeWire lists and what the `default` metadata says about them.
+pub struct SourceScan {
+    pub sources: Vec<SourceNode>,
+    pub configured: Option<String>,
+    pub effective: Option<String>,
+    /// The `default` metadata object, bound; `None` without a session manager.
+    pub defaults: Option<Metadata>,
+}
+
+impl SourceScan {
+    /// The real microphone to capture when the client asked for the default source.
+    pub fn microphone(&self) -> Option<&str> {
+        capture_target(
+            &[self.configured.as_deref(), self.effective.as_deref()],
+            &self.sources,
+        )
+    }
+}
+
+pub fn scan_sources(
     main_loop: &MainLoopRc,
     core: &Core,
-) -> Result<Option<String>, pw::Error> {
-    let registry = core.get_registry()?;
+    registry: &Registry,
+) -> anyhow::Result<SourceScan> {
     let sources = Rc::new(RefCell::new(Vec::new()));
     let defaults = Rc::new(RefCell::new(None::<GlobalObject<PropertiesBox>>));
-    let _registry_listener = registry
+    let registry_listener = registry
         .add_listener_local()
         .global({
             let (sources, defaults) = (Rc::clone(&sources), Rc::clone(&defaults));
@@ -57,52 +77,38 @@ pub fn resolve_capture_target(
         })
         .register();
     roundtrip(main_loop, core)?;
+    drop(registry_listener);
 
-    let default_source = Rc::new(RefCell::new(None::<String>));
+    let values = Rc::new(RefCell::new((None::<String>, None::<String>)));
     let metadata = defaults
         .borrow()
         .as_ref()
         .map(|global| registry.bind::<Metadata, _>(global))
         .transpose()?;
-    let _metadata_listener = metadata.as_ref().map(|metadata| {
-        let default_source = Rc::clone(&default_source);
-        metadata
+    if let Some(metadata) = &metadata {
+        let _metadata_listener = metadata
             .add_listener_local()
-            .property(move |subject, key, _, value| {
-                if subject == PW_ID_CORE && key == Some(DEFAULT_SOURCE_KEY) {
-                    *default_source.borrow_mut() =
-                        value.and_then(metadata_node_name).map(str::to_owned);
+            .property({
+                let values = Rc::clone(&values);
+                move |subject, key, _, value| {
+                    let name = || value.and_then(metadata_node_name).map(str::to_owned);
+                    let mut values = values.borrow_mut();
+                    match key {
+                        Some(CONFIGURED_SOURCE_KEY) if subject == PW_ID_CORE => values.0 = name(),
+                        Some(DEFAULT_SOURCE_KEY) if subject == PW_ID_CORE => values.1 = name(),
+                        _ => {}
+                    }
+                    0
                 }
-                0
             })
-            .register()
-    });
-    if metadata.is_some() {
+            .register();
         roundtrip(main_loop, core)?;
     }
-    let default = default_source.borrow();
-    let sources = sources.borrow();
-    Ok(capture_target(default.as_deref(), &sources).map(str::to_owned))
-}
-
-/// Runs the loop until the server has answered everything sent so far.
-fn roundtrip(main_loop: &MainLoopRc, core: &Core) -> Result<(), pw::Error> {
-    let pending = core.sync(0)?;
-    let done = Rc::new(Cell::new(false));
-    let _listener = core
-        .add_listener_local()
-        .done({
-            let (done, main_loop) = (Rc::clone(&done), main_loop.clone());
-            move |id, seq| {
-                if id == PW_ID_CORE && seq == pending {
-                    done.set(true);
-                    main_loop.quit();
-                }
-            }
-        })
-        .register();
-    while !done.get() {
-        main_loop.run();
-    }
-    Ok(())
+    let (configured, effective) = values.take();
+    Ok(SourceScan {
+        sources: sources.take(),
+        configured,
+        effective,
+        defaults: metadata,
+    })
 }

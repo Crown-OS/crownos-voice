@@ -9,9 +9,10 @@ mod residency;
 mod selection;
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::Instant;
 
+use crownos_config::schema::VoiceBackend;
 use voice_abi::host::{LoadError, LoadedBackend};
 use voice_abi::{Model, Workload};
 use voice_protocol::BackendInfo;
@@ -33,6 +34,7 @@ pub struct Registry {
     plugin_dir: PathBuf,
     models_dir: PathBuf,
     probed: OnceLock<Vec<ProbedBackend>>,
+    setting: Mutex<VoiceBackend>,
 }
 
 impl Registry {
@@ -41,7 +43,13 @@ impl Registry {
             plugin_dir: env_dir(BACKENDS_DIR_VARIABLE, DEFAULT_BACKENDS_DIR),
             models_dir: env_dir(MODELS_DIR_VARIABLE, DEFAULT_MODELS_DIR),
             probed: OnceLock::new(),
+            setting: Mutex::default(),
         }
+    }
+
+    /// Limits later choices to the backends `setting` permits.
+    pub fn restrict(&self, setting: VoiceBackend) {
+        *self.setting.lock().unwrap_or_else(PoisonError::into_inner) = setting;
     }
 
     fn backends(&self) -> &[ProbedBackend] {
@@ -57,14 +65,28 @@ impl Registry {
         model: Model,
         workload: Workload,
     ) -> Option<(BackendChoice, FrameProcessor)> {
+        let order = self.ranking(workload);
+        let (position, processor) = self.create_first(&order, model, workload)?;
+        Some((BackendChoice::new(order, position), processor))
+    }
+
+    /// Name of the backend [`Self::choose`] tries first for `workload`.
+    pub fn preferred(&self, workload: Workload) -> Option<String> {
+        let first = *self.ranking(workload).first()?;
+        self.backends()
+            .get(first)
+            .map(|backend| backend.name().to_owned())
+    }
+
+    /// Backends permitted by the setting that can serve `workload`, best first.
+    fn ranking(&self, workload: Workload) -> Vec<usize> {
+        let setting = *self.setting.lock().unwrap_or_else(PoisonError::into_inner);
         let candidates: Vec<Candidate> = self
             .backends()
             .iter()
-            .map(|backend| backend.candidate(workload))
+            .map(|backend| backend.candidate(workload, setting))
             .collect();
-        let order = rank(&candidates);
-        let (position, processor) = self.create_first(&order, model, workload)?;
-        Some((BackendChoice::new(order, position), processor))
+        rank(&candidates)
     }
 
     /// Creates a processor on the next backend below `choice`'s current one that can run `model`.

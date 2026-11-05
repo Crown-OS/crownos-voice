@@ -11,7 +11,7 @@ use crate::daemon::Daemon;
 use crate::deferred::{DeferredRequest, ReplyTo};
 use crate::enhancement::model_for;
 use crate::job::{JobPlan, OfflineJob};
-use crate::live::{LiveStream, StreamPlan, SwitchCause, spawn_backend_switch};
+use crate::live::{LiveStream, StreamOwner, StreamPlan, SwitchCause, spawn_backend_switch};
 
 const ANSWERED_WHEN_READY: &str = "answered once its backend is ready";
 
@@ -56,7 +56,7 @@ impl Daemon {
             return Err(failure("invalid source name"));
         }
         let plan = StreamPlan {
-            owner: reply.peer,
+            owner: StreamOwner::Peer(reply.peer),
             stream: StreamId(self.allocate_id()),
             target: source,
             model,
@@ -65,7 +65,7 @@ impl Daemon {
             plan,
             Arc::clone(&self.registry),
             self.notifier.clone(),
-            reply,
+            Some(reply),
         )
         .map_err(|error| failure(format!("could not start the stream: {error}")))
     }
@@ -80,7 +80,7 @@ impl Daemon {
         if !self
             .streams
             .get(&stream)
-            .is_some_and(|live| live.owner == reply.peer)
+            .is_some_and(|live| live.owner == StreamOwner::Peer(reply.peer))
         {
             return Err(failure("no such stream"));
         }
@@ -116,7 +116,7 @@ impl voice::Handler for Daemon {
     fn close_stream(&mut self, stream: StreamId) -> Result<(), RemoteError> {
         let caller = self.caller()?;
         match self.streams.get(&stream) {
-            Some(live) if live.owner == caller => {
+            Some(live) if live.owner == StreamOwner::Peer(caller) => {
                 self.streams.remove(&stream);
                 Ok(())
             }
@@ -163,6 +163,8 @@ impl voice::Handler for Daemon {
             backends: self.registry.status(),
             streams: self.streams.len() as u32,
             jobs: self.jobs.len() as u32,
+            realtime_backend: self.registry.preferred(Workload::Realtime),
+            offline_backend: self.registry.preferred(Workload::Offline),
         })
     }
 }

@@ -2,7 +2,7 @@
 Description=CrownOS voice enhancement service
 Documentation=https://github.com/Crown-OS/crownos-voice
 Requires=crown-voiced.socket
-After=crown-voiced.socket pipewire.service
+After=crown-voiced.socket pipewire.service wireplumber.service
 Wants=pipewire.service
 
 [Service]
@@ -13,4 +13,5 @@ NoNewPrivileges=yes
 LockPersonality=yes
 
 [Install]
+WantedBy=default.target
 Also=crown-voiced.socket

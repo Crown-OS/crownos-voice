@@ -3,8 +3,13 @@
 mod backend_switch;
 mod capture_target;
 mod deadline;
+mod default_claim;
+mod default_metadata;
+mod default_source;
 mod graph;
+mod owner;
 mod rings;
+mod roundtrip;
 mod source_query;
 mod worker;
 
@@ -14,7 +19,6 @@ use std::sync::atomic::AtomicU32;
 use std::time::Instant;
 
 use anyhow::Context;
-use crownos_ipc::PeerId;
 use voice_abi::{Model, Workload};
 use voice_protocol::{EnhancedNode, StreamId};
 
@@ -24,16 +28,19 @@ use crate::processor::FrameProcessor;
 use crate::registry::{BackendChoice, Registry};
 pub use backend_switch::{BackendSwitch, NO_BACKEND, SwitchCause, spawn_backend_switch};
 use deadline::DeadlineMonitor;
-use graph::{EnhancedGraph, GraphSpec};
+use graph::{EnhancedGraph, GraphSpec, SourceRole};
+pub use owner::StreamOwner;
 use rings::LATENCY_SAMPLES;
 use worker::EnhancementWorker;
 
 /// `node.name` prefix of every node this service creates.
 pub const NODE_PREFIX: &str = "crownos-voice";
+/// `node.name` of the all-apps microphone, stable so the session manager remembers it as default.
+pub const ALL_APPS_NODE: &str = "crownos-voice.all-apps";
 
 /// One enhanced microphone. Fields drop in order: PipeWire stops before the worker.
 pub struct LiveStream {
-    pub owner: PeerId,
+    pub owner: StreamOwner,
     pub node: EnhancedNode,
     pub model: Model,
     pub choice: BackendChoice,
@@ -43,7 +50,7 @@ pub struct LiveStream {
 
 /// What `open_stream` decided before any backend exists.
 pub struct StreamPlan {
-    pub owner: PeerId,
+    pub owner: StreamOwner,
     pub stream: StreamId,
     pub target: Option<String>,
     pub model: Model,
@@ -55,7 +62,7 @@ impl LiveStream {
         plan: StreamPlan,
         registry: Arc<Registry>,
         notifier: Notifier,
-        reply: ReplyTo,
+        reply: Option<ReplyTo>,
     ) -> io::Result<()> {
         std::thread::Builder::new()
             .name(format!("voice-open-{}", plan.stream.0))
@@ -71,9 +78,16 @@ impl LiveStream {
         let (choice, processor) = registry
             .choose(plan.model, Workload::Realtime)
             .context(NO_BACKEND)?;
+        let (node_name, role) = match plan.owner {
+            StreamOwner::Peer(_) => (
+                format!("{NODE_PREFIX}.{}.{}", std::process::id(), plan.stream.0),
+                SourceRole::PerApp,
+            ),
+            StreamOwner::AllApps => (ALL_APPS_NODE.to_owned(), SourceRole::SystemDefault),
+        };
         let node = EnhancedNode {
             stream: plan.stream,
-            node_name: format!("{NODE_PREFIX}.{}.{}", std::process::id(), plan.stream.0),
+            node_name,
             backend: registry.label(choice.current(), Workload::Realtime),
             latency_samples: node_latency(&processor),
         };
@@ -90,6 +104,7 @@ impl LiveStream {
         let spec = GraphSpec {
             target: plan.target,
             node_name: node.node_name.clone(),
+            role,
         };
         let graph = EnhancedGraph::spawn(spec, tap, mixer)
             .context("could not create the PipeWire nodes")?;
