@@ -9,6 +9,7 @@ mod noisy_speech;
 use std::path::PathBuf;
 
 use anyhow::{Context, ensure};
+use common::pink_noise::pink_noise;
 use common::{CPU, ONNX, Plugin, RunningDaemon, backends, enhance};
 use noisy_speech::{NoisySpeech, rms};
 use voice_engine::{Loudness, TARGET_LUFS};
@@ -19,6 +20,10 @@ const INSTALLED_MODELS_DIR: &str = "/usr/share/crownos/voice/models";
 const REQUIRED_SNR_GAIN_DB: f32 = 10.0;
 const MAX_SPEECH_LOSS_DB: f32 = 6.0;
 const MAX_LOUDNESS_ERROR_LU: f32 = 1.0;
+/// -40 dBFS, under the fixture's -26 dBFS voice.
+const NOISE_RMS: f32 = 0.01;
+/// Reported instead of minus infinity for digital silence.
+const SILENCE_DBFS: f32 = -120.0;
 const ALL_PROFILES: [Enhancement; 3] = [
     Enhancement::Light,
     Enhancement::NoiseSuppression,
@@ -34,7 +39,19 @@ fn models_dir() -> PathBuf {
 }
 
 fn decibels(level: f32) -> f32 {
-    20.0 * level.max(f32::MIN_POSITIVE).log10()
+    (20.0 * level.log10()).max(SILENCE_DBFS)
+}
+
+/// The fixture's syllables over pink instead of white noise.
+fn speech_in_pink_noise() -> NoisySpeech {
+    let mut speech = NoisySpeech::new();
+    speech.noisy = speech
+        .clean
+        .iter()
+        .zip(pink_noise(speech.clean.len(), NOISE_RMS))
+        .map(|(voice, noise)| voice + noise)
+        .collect();
+    speech
 }
 
 /// RMS levels in dBFS of the noise-only gaps and of the voiced stretches after the first.
@@ -72,7 +89,7 @@ fn assert_cleans(
 ) -> anyhow::Result<String> {
     let daemon = RunningDaemon::start(test, plugins, &models_dir())?;
     let mut client = daemon.connect()?;
-    let speech = NoisySpeech::new();
+    let speech = speech_in_pink_noise();
     let before = Levels::of(&speech, &speech.noisy);
     for &enhancement in profiles {
         let output = enhance(&mut client, enhancement, &speech.noisy)?;
@@ -149,7 +166,7 @@ fn offline_jobs_go_to_the_best_probed_plugin() -> anyhow::Result<()> {
         .context("no plugins")?
         .name
         .clone();
-    let speech = NoisySpeech::new();
+    let speech = speech_in_pink_noise();
     enhance(&mut client, Enhancement::NoiseSuppression, &speech.noisy)?;
     let served: Vec<_> = backends(&mut client)?
         .into_iter()

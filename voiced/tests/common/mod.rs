@@ -3,6 +3,8 @@
 
 #![allow(dead_code)]
 
+pub mod pink_noise;
+
 use std::io::{Read, Write};
 use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};

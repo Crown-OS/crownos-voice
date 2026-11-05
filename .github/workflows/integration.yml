@@ -1,6 +1,7 @@
 # Runs the enhancement backends for real: ONNX Runtime from the Arch repositories, the pinned
 # DeepFilterNet3 export from packaging/fetch-models.sh, and offline jobs through crown-voiced on
-# the built plugins. Runners have no GPU, so only ONNX Runtime's CPU execution provider runs.
+# the built plugins, then a live stream on a headless PipeWire. Runners have no GPU, so only ONNX
+# Runtime's CPU execution provider runs.
 name: Integration
 
 on:
@@ -34,7 +35,7 @@ jobs:
     steps:
       - uses: Crown-OS/.github/.github/actions/prepare-workspace@main
         with:
-          packages: pipewire onnxruntime-cpu
+          packages: pipewire wireplumber onnxruntime-cpu
           toolchain: 1.97.1
 
       - uses: Swatinem/rust-cache@v2
@@ -61,3 +62,9 @@ jobs:
         run: >-
           cargo test --release --locked -p crown-voiced --test real_backends --
           --ignored --nocapture
+
+      - name: Live stream on a headless PipeWire
+        run: |
+          cargo build --release --locked -p crown-voiced --bin crown-voiced --example open_stream
+          cargo build --release --locked -p crownos-voice-backend-cpu
+          dbus-run-session -- .github/scripts/live-stream.sh "$PWD/target/release" "$RUNNER_TEMP/live"
