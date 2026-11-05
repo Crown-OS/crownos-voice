@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use crownos_config::schema::VoiceBackend;
 use serde::{Deserialize, Serialize};
 use voice_abi::host::LoadedBackend;
 use voice_abi::{Probe, Workload};
@@ -9,7 +10,7 @@ use voice_protocol::BackendInfo;
 use super::preference::Preference;
 use super::probe_cache::{PluginFingerprint, ProbeCache};
 use super::residency::Residency;
-use super::selection::Candidate;
+use super::selection::{Candidate, permits};
 
 const PLUGIN_EXTENSION: &str = "so";
 
@@ -57,9 +58,14 @@ impl ProbedBackend {
         }
     }
 
-    pub fn candidate(&self, workload: Workload) -> Candidate {
+    /// Ranking input; a backend the setting does not permit scores zero, so it is never chosen.
+    pub fn candidate(&self, workload: Workload, setting: VoiceBackend) -> Candidate {
         Candidate {
-            score: self.probe(workload).score,
+            score: if permits(setting, self.name()) {
+                self.probe(workload).score
+            } else {
+                0
+            },
             preference: self.preference,
         }
     }

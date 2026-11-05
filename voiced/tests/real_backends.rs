@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, ensure};
 use common::pink_noise::pink_noise;
-use common::{CPU, ONNX, Plugin, RunningDaemon, backends, enhance};
+use common::{CPU, ONNX, Plugin, RunningDaemon, backends, enhance, status};
 use noisy_speech::{NoisySpeech, rms};
 use voice_engine::{Loudness, TARGET_LUFS};
 use voice_protocol::Enhancement;
@@ -152,20 +152,21 @@ fn the_onnx_plugin_cleans_through_the_daemon() -> anyhow::Result<()> {
 fn offline_jobs_go_to_the_best_probed_plugin() -> anyhow::Result<()> {
     let daemon = RunningDaemon::start("best", &[CPU, ONNX], &models_dir())?;
     let mut client = daemon.connect()?;
-    let probed = backends(&mut client)?;
-    let onnx = probed
+    let before = status(&mut client)?;
+    eprintln!("probed: {:?}", before.backends);
+    let onnx = before
+        .backends
         .iter()
         .find(|backend| backend.name == "onnx")
         .context("the onnx plugin was not probed")?;
-    eprintln!("probed: {probed:?}");
     assert!(onnx.offline_score > 0, "ONNX Runtime was not found");
     assert_eq!(onnx.realtime_score, 0, "the onnx plugin is offline only");
-    let best = probed
+    let best = before
+        .backends
         .iter()
         .max_by_key(|backend| backend.offline_score)
-        .context("no plugins")?
-        .name
-        .clone();
+        .map(|backend| backend.name.clone());
+    assert_eq!(before.offline_backend, best);
     let speech = speech_in_pink_noise();
     enhance(&mut client, Enhancement::NoiseSuppression, &speech.noisy)?;
     let served: Vec<_> = backends(&mut client)?
@@ -173,6 +174,6 @@ fn offline_jobs_go_to_the_best_probed_plugin() -> anyhow::Result<()> {
         .filter(|backend| backend.loaded)
         .map(|backend| backend.name)
         .collect();
-    assert_eq!(served, [best]);
+    assert_eq!(served, Vec::from_iter(best));
     Ok(())
 }

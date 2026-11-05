@@ -12,7 +12,7 @@ use std::process::{Child, Command};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, bail, ensure};
-use voice_protocol::{BackendInfo, Enhancement, voice};
+use voice_protocol::{BackendInfo, Enhancement, ServiceStatus, voice};
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
 pub const REPLY_TIMEOUT: Option<Duration> = Some(Duration::from_secs(10));
@@ -96,6 +96,7 @@ impl RunningDaemon {
             .env("CROWN_VOICE_BACKENDS", &backends)
             .env("CROWN_VOICE_MODELS", models_dir)
             .env("XDG_CACHE_HOME", root.join("cache"))
+            .env("CROWN_CONFIG_DIR", root.join("config"))
             .env("RUST_LOG", "warn")
             .env_remove("LISTEN_PID")
             .spawn()?;
@@ -117,9 +118,13 @@ impl RunningDaemon {
     }
 }
 
-pub fn backends(client: &mut voice::Client) -> anyhow::Result<Vec<BackendInfo>> {
+pub fn status(client: &mut voice::Client) -> anyhow::Result<ServiceStatus> {
     let status = client.status()?;
-    Ok(client.wait(status, REPLY_TIMEOUT)?.backends)
+    Ok(client.wait(status, REPLY_TIMEOUT)?)
+}
+
+pub fn backends(client: &mut voice::Client) -> anyhow::Result<Vec<BackendInfo>> {
+    Ok(status(client)?.backends)
 }
 
 fn pcm(samples: &[f32]) -> Vec<u8> {

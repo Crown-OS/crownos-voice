@@ -1,10 +1,13 @@
 //! The PipeWire side of a live stream: a capture stream and the virtual source apps record from.
 
+use std::cell::Cell;
 use std::io::Cursor;
+use std::rc::Rc;
 use std::sync::mpsc;
 use std::thread::JoinHandle;
 
 use pipewire as pw;
+use pw::constants::ID_ANY;
 use pw::context::ContextBox;
 use pw::main_loop::MainLoopRc;
 use pw::properties::{PropertiesBox, properties};
@@ -18,8 +21,10 @@ use pw::stream::{Stream, StreamBox, StreamFlags};
 use voice_abi::SAMPLE_RATE;
 
 use super::NODE_PREFIX;
+use super::default_claim::DefaultClaim;
+use super::default_source::DefaultSourceKeeper;
 use super::rings::{CaptureTap, DeadlineMixer};
-use super::source_query::resolve_capture_target;
+use super::source_query::scan_sources;
 use crate::util::pcm::SAMPLE_BYTES;
 
 const QUANTUM: &str = "480/48000";
@@ -28,11 +33,20 @@ const SOURCE_DESCRIPTION: &str = "CrownOS Enhanced Microphone";
 /// default source, so no capture ever records an enhanced node, even one that became the default.
 const LOOP_GUARD_LINK_GROUP: &str = NODE_PREFIX;
 
+/// Whether a stream's virtual source also stands in as the default source.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SourceRole {
+    PerApp,
+    /// Becomes the default source, capturing whichever microphone the user picks as default.
+    SystemDefault,
+}
+
 /// Where a live stream captures from and the virtual source it exposes.
 pub struct GraphSpec {
     /// `node.name` of the microphone; `None` means the default source.
     pub target: Option<String>,
     pub node_name: String,
+    pub role: SourceRole,
 }
 
 /// A PipeWire loop thread running one stream's two nodes until dropped.
@@ -60,11 +74,11 @@ impl EnhancedGraph {
             Ok(Ok(())) => Ok(graph),
             Ok(Err(error)) => {
                 graph.stop();
-                Err(error.into())
+                Err(error)
             }
             Err(_) => {
                 graph.stop();
-                Err(pw::Error::CreationFailed.into())
+                Err(anyhow::anyhow!("the PipeWire thread exited early"))
             }
         }
     }
@@ -88,33 +102,41 @@ fn run_graph(
     tap: CaptureTap,
     mixer: DeadlineMixer,
     quit: pw::channel::Receiver<()>,
-    ready: &mpsc::SyncSender<Result<(), pw::Error>>,
-) -> Result<(), pw::Error> {
+    ready: &mpsc::SyncSender<anyhow::Result<()>>,
+) -> anyhow::Result<()> {
     let main_loop = MainLoopRc::new(None)?;
     let context = ContextBox::new(main_loop.loop_(), None)?;
     let core = context.connect(None)?;
+    let registry = core.get_registry()?;
     let format = mono_format()?;
-    let resolved;
-    let target = match spec.target.as_deref() {
-        Some(named) => Some(named),
-        None => {
-            resolved = resolve_capture_target(&main_loop, &core)?;
-            resolved.as_deref()
-        }
-    };
+    let needs_scan = spec.target.is_none() || spec.role == SourceRole::SystemDefault;
+    let scan = needs_scan
+        .then(|| scan_sources(&main_loop, &core, &registry))
+        .transpose()?;
+    let target = spec
+        .target
+        .as_deref()
+        .or_else(|| scan.as_ref()?.microphone());
     log::info!(
         "{} captures from {}",
         spec.node_name,
         target.unwrap_or("the default source")
     );
+    let claim = (spec.role == SourceRole::SystemDefault)
+        .then(|| DefaultClaim::new(&spec.node_name, target));
 
     let capture = StreamBox::new(
         &core,
         "crownos-voice-capture",
         capture_properties(spec, target),
     )?;
+    let capture_node = Rc::new(Cell::new(ID_ANY));
     let _capture_listener = capture
         .add_local_listener_with_user_data(tap)
+        .state_changed({
+            let capture_node = Rc::clone(&capture_node);
+            move |stream, _, _, _| capture_node.set(stream.node_id())
+        })
         .process(capture_block)
         .register()?;
     capture.connect(
@@ -136,10 +158,26 @@ fn run_graph(
         &mut [Pod::from_bytes(&format).ok_or(pw::Error::CreationFailed)?],
     )?;
 
+    let keeper = claim.and_then(|claim| {
+        let defaults = scan.and_then(|scan| scan.defaults);
+        if defaults.is_none() {
+            log::warn!(
+                "no default metadata, so {} cannot become the default source",
+                spec.node_name
+            );
+        }
+        defaults.map(|metadata| DefaultSourceKeeper::claim(metadata, claim, capture_node))
+    });
+
     let quitting_loop = main_loop.clone();
     let _quit = quit.attach(main_loop.loop_(), move |()| quitting_loop.quit());
     let _ = ready.send(Ok(()));
     main_loop.run();
+    if let Some(keeper) = keeper
+        && let Err(error) = keeper.release(&main_loop, &core)
+    {
+        log::warn!("could not give the default source back: {error:#}");
+    }
     Ok(())
 }
 

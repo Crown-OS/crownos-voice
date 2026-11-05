@@ -1,6 +1,19 @@
 use std::cmp::Reverse;
 use std::fmt::Display;
 
+use crownos_config::schema::VoiceBackend;
+
+/// Name of the plugin that runs on the CPU alone.
+pub const CPU_PLUGIN: &str = "cpu";
+
+/// Whether the backend setting lets `plugin` serve streams and jobs.
+pub fn permits(setting: VoiceBackend, plugin: &str) -> bool {
+    match setting {
+        VoiceBackend::Automatic => true,
+        VoiceBackend::Cpu => plugin == CPU_PLUGIN,
+    }
+}
+
 /// What ranking needs to know about one backend for one workload.
 #[derive(Clone, Copy, Debug)]
 pub struct Candidate {
@@ -122,6 +135,15 @@ mod tests {
             first_created(&[1, 2], |_| Err::<(), _>("unavailable")),
             None
         );
+    }
+
+    #[test]
+    fn the_cpu_setting_permits_only_the_cpu_plugin() {
+        assert!(permits(VoiceBackend::Cpu, CPU_PLUGIN));
+        assert!(!permits(VoiceBackend::Cpu, "onnx"));
+        assert!(!permits(VoiceBackend::Cpu, "passthrough"));
+        assert!(permits(VoiceBackend::Automatic, "onnx"));
+        assert!(permits(VoiceBackend::Automatic, CPU_PLUGIN));
     }
 
     #[test]

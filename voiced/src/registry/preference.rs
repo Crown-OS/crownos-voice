@@ -2,6 +2,8 @@
 
 use crownos_config::system::ai::{AiConfig, Backend};
 
+use super::selection::CPU_PLUGIN;
+
 /// Voice plugin names, best first, as the installer set them up.
 #[derive(Debug, Default)]
 pub struct Preference {
@@ -42,7 +44,7 @@ impl Preference {
 
 fn voice_plugin(backend: Backend) -> Option<&'static str> {
     match backend {
-        Backend::Cpu => Some("cpu"),
+        Backend::Cpu => Some(CPU_PLUGIN),
         Backend::Cuda | Backend::MiGraphX | Backend::OpenVino | Backend::VitisAi => Some("onnx"),
         Backend::Maxine => None,
     }
@@ -65,7 +67,7 @@ mod tests {
         };
         let preference = Preference::from_config(&config);
         assert_eq!(preference.rank("onnx"), Some(0));
-        assert_eq!(preference.rank("cpu"), Some(1));
+        assert_eq!(preference.rank(CPU_PLUGIN), Some(1));
         assert_eq!(preference.rank("maxine"), None);
         assert_eq!(preference.rank("passthrough"), None);
     }

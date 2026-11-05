@@ -1,15 +1,19 @@
 //! The single-threaded IPC loop: requests, disconnects, worker notices, idle unload and exit.
 
 use std::collections::HashSet;
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use crownos_ipc::{PeerId, Server};
 use rustix::event::{PollFd, PollFlags, Timespec};
 
+use crate::activation::Launch;
 use crate::daemon::Daemon;
 use crate::notice::{NoticeInbox, notice_channel};
 use crate::registry::Registry;
+use crate::settings;
+use crate::util::shutdown_signal::shutdown_signal;
 
 /// The service exits after this long with no peers, streams or jobs.
 const IDLE_EXIT: Duration = Duration::from_secs(30);
@@ -22,14 +26,22 @@ struct Readiness {
     peers: Vec<(PeerId, PollFlags)>,
 }
 
-pub fn run(mut server: Server, registry: Registry) -> anyhow::Result<()> {
+pub fn run(mut server: Server, registry: Registry, launch: Launch) -> anyhow::Result<()> {
+    let shutdown = shutdown_signal().context("could not handle termination signals")?;
     let (notifier, mut inbox) = notice_channel().context("could not create the notice pipe")?;
-    let mut daemon = Daemon::new(registry, notifier);
+    let _settings = settings::follow(notifier.clone());
+    let mut daemon = Daemon::new(registry, notifier, settings::load());
+    daemon.reconcile_all_apps();
     let mut peers = HashSet::new();
     let mut idle_since = Some(Instant::now());
+    let mut idle_exit = startup_idle_exit(launch, &daemon);
     log::info!("serving {}", server.service());
     loop {
         let ready = wait(&server, &inbox)?;
+        if shutdown.load(Ordering::Relaxed) {
+            log::info!("asked to stop, exiting");
+            return Ok(());
+        }
         if ready.listener {
             while let Some(peer) = server.accept()? {
                 peers.insert(peer);
@@ -52,10 +64,20 @@ pub fn run(mut server: Server, registry: Registry) -> anyhow::Result<()> {
         daemon.sweep(now);
         if !(peers.is_empty() && daemon.is_idle()) {
             idle_since = None;
-        } else if now.duration_since(*idle_since.get_or_insert(now)) >= IDLE_EXIT {
-            log::info!("idle for {IDLE_EXIT:?}, exiting");
+            idle_exit = IDLE_EXIT;
+        } else if now.duration_since(*idle_since.get_or_insert(now)) >= idle_exit {
+            log::info!("idle for {idle_exit:?}, exiting");
             return Ok(());
         }
+    }
+}
+
+/// Started at login with nothing to do, the service leaves after its first poll; a client that
+/// connected meanwhile is accepted by then, and systemd starts it again for any later one.
+fn startup_idle_exit(launch: Launch, daemon: &Daemon) -> Duration {
+    match launch {
+        Launch::Systemd if daemon.is_idle() => Duration::ZERO,
+        Launch::Systemd | Launch::Manual => IDLE_EXIT,
     }
 }
 

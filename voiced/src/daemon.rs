@@ -4,13 +4,15 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
+use crownos_config::schema::Voice;
 use crownos_ipc::{Error, Message, PeerId, RemoteError, Server};
-use voice_abi::Workload;
+use voice_abi::{Model, Workload};
 use voice_protocol::{JobId, StreamId, voice};
 
+use crate::all_apps::AllAppsState;
 use crate::deferred::{self, ReplyTo, Routed};
 use crate::job::OfflineJob;
-use crate::live::{BackendSwitch, LiveStream, SwitchCause, spawn_backend_switch};
+use crate::live::{BackendSwitch, LiveStream, StreamOwner, SwitchCause, spawn_backend_switch};
 use crate::notice::{Notice, Notifier};
 use crate::registry::Registry;
 
@@ -19,17 +21,22 @@ pub struct Daemon {
     pub streams: HashMap<StreamId, LiveStream>,
     pub jobs: HashMap<JobId, OfflineJob>,
     pub notifier: Notifier,
+    pub settings: Voice,
+    pub all_apps: AllAppsState,
     next_id: u32,
     caller: Option<PeerId>,
 }
 
 impl Daemon {
-    pub fn new(registry: Registry, notifier: Notifier) -> Self {
+    pub fn new(registry: Registry, notifier: Notifier, settings: Voice) -> Self {
+        registry.restrict(settings.backend);
         Self {
             registry: Arc::new(registry),
             streams: HashMap::new(),
             jobs: HashMap::new(),
             notifier,
+            settings,
+            all_apps: AllAppsState::Off,
             next_id: 0,
             caller: None,
         }
@@ -70,12 +77,13 @@ impl Daemon {
     }
 
     pub fn is_idle(&self) -> bool {
-        self.streams.is_empty() && self.jobs.is_empty()
+        self.streams.is_empty() && self.jobs.is_empty() && self.all_apps != AllAppsState::Opening
     }
 
     /// Tears down everything `peer` opened.
     pub fn release(&mut self, peer: PeerId) {
-        self.streams.retain(|_, stream| stream.owner != peer);
+        self.streams
+            .retain(|_, stream| stream.owner != StreamOwner::Peer(peer));
         self.jobs.retain(|_, job| job.owner != peer);
     }
 
@@ -95,8 +103,18 @@ impl Daemon {
                     _ => Ok(()),
                 }
             }
-            Notice::StreamOpened { reply, opened } => {
+            Notice::StreamOpened {
+                reply: Some(reply),
+                opened,
+            } => {
                 self.finish_open(server, reply, opened);
+                Ok(())
+            }
+            Notice::StreamOpened {
+                reply: None,
+                opened,
+            } => {
+                self.adopt_all_apps(opened);
                 Ok(())
             }
             Notice::BackendSwitched {
@@ -104,6 +122,10 @@ impl Daemon {
                 cause,
                 switched,
             } => self.finish_switch(server, stream, cause, switched),
+            Notice::SettingsChanged(settings) => {
+                self.apply_settings(settings);
+                Ok(())
+            }
         }
     }
 
@@ -164,12 +186,13 @@ impl Daemon {
         cause: SwitchCause,
         switched: Result<BackendSwitch, String>,
     ) -> Result<(), Error> {
+        let wanted = self.wanted_model(id);
         let stream = self.streams.get_mut(&id);
         let outcome = match (switched, stream) {
             (Err(reason), _) => Err(reason),
             (Ok(_), None) => Err("no such stream".to_owned()),
             (Ok(switch), Some(stream)) => {
-                if matches!(cause, SwitchCause::Demotion) && switch.model != stream.model {
+                if !matches!(cause, SwitchCause::Requested(_)) && wanted != Some(switch.model) {
                     return Ok(());
                 }
                 let backend = self
@@ -184,16 +207,25 @@ impl Daemon {
                 let _ = reply.send(server, outcome.as_ref().map_err(RemoteError::handler));
                 Ok(())
             }
-            SwitchCause::Demotion => match outcome {
+            SwitchCause::Demotion | SwitchCause::Settings => match outcome {
                 Ok(node) => {
-                    log::info!("stream {} demoted to {}", id.0, node.backend);
+                    log::info!("stream {} now runs on {}", id.0, node.backend);
                     server.emit(&voice::StreamChanged { node })
                 }
                 Err(reason) => {
-                    log::warn!("stream {} could not be demoted: {reason}", id.0);
+                    log::warn!("stream {} kept its backend: {reason}", id.0);
                     Ok(())
                 }
             },
+        }
+    }
+
+    /// The model a stream should end up on: the settings' for the all-apps one, else its own.
+    fn wanted_model(&self, id: StreamId) -> Option<Model> {
+        if self.all_apps == AllAppsState::Running(id) {
+            self.wanted_all_apps_model()
+        } else {
+            self.streams.get(&id).map(|stream| stream.model)
         }
     }
 
