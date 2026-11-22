@@ -36,7 +36,6 @@ jobs:
       - uses: Crown-OS/.github/.github/actions/prepare-workspace@main
         with:
           packages: pipewire pipewire-audio wireplumber onnxruntime-cpu
-          toolchain: 1.97.1
 
       - uses: Swatinem/rust-cache@v2
         with:
