@@ -54,15 +54,19 @@ impl Drop for RunningDaemon {
 
 /// Builds `plugins` in the profile of this test binary and returns where their libraries are.
 fn build_plugins(plugins: &[Plugin]) -> anyhow::Result<PathBuf> {
-    let profile_dir = std::env::current_exe()?
+    let target_dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
         .parent()
-        .and_then(Path::parent)
-        .map(Path::to_path_buf)
-        .context("test binary has no profile directory")?;
-    let profile = profile_dir
-        .file_name()
-        .and_then(|name| name.to_str())
-        .filter(|&name| name != DEV_PROFILE_DIR);
+        .context("CARGO_TARGET_TMPDIR has no parent")?
+        .canonicalize()?;
+    let test_binary = std::env::current_exe()?.canonicalize()?;
+    let profile_dir_name = test_binary
+        .strip_prefix(&target_dir)?
+        .components()
+        .next()
+        .and_then(|component| component.as_os_str().to_str())
+        .context("test binary is not in a profile directory")?;
+    let profile_dir = target_dir.join(profile_dir_name);
+    let profile = Some(profile_dir_name).filter(|&name| name != DEV_PROFILE_DIR);
     let mut cargo = Command::new(env!("CARGO"));
     cargo.args(["build", "--quiet"]);
     if let Some(profile) = profile {

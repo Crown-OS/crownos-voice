@@ -58,10 +58,9 @@ fn enhance_tract(model: Model, noisy: &[f32]) -> Result<Vec<f32>, BackendError> 
     };
     let mut tract = DfTract::new(DfParams::default(), &params).map_err(failed)?;
     let mut output = vec![0.0; noisy.len()];
-    for (frame, enhanced) in noisy
-        .chunks_exact(FRAME_LEN)
-        .zip(output.chunks_exact_mut(FRAME_LEN))
-    {
+    let (frames, _) = noisy.as_chunks::<FRAME_LEN>();
+    let (enhanced_frames, _) = output.as_chunks_mut::<FRAME_LEN>();
+    for (frame, enhanced) in frames.iter().zip(enhanced_frames) {
         tract
             .process(
                 ArrayView2::from_shape((MONO, FRAME_LEN), frame).map_err(failed)?,

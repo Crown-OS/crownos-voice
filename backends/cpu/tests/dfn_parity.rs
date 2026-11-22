@@ -227,10 +227,9 @@ fn enhance_offline(
 fn enhance_streaming(noisy: &[f32]) -> TractResult<Vec<f32>> {
     let mut model = DfTract::default();
     let mut output = vec![0.0; noisy.len()];
-    for (frame, out) in noisy
-        .chunks_exact(HOP_SIZE)
-        .zip(output.chunks_exact_mut(HOP_SIZE))
-    {
+    let (frames, _) = noisy.as_chunks::<HOP_SIZE>();
+    let (outputs, _) = output.as_chunks_mut::<HOP_SIZE>();
+    for (frame, out) in frames.iter().zip(outputs) {
         model.process(
             ArrayView2::from_shape((1, HOP_SIZE), frame)?,
             ArrayViewMut2::from_shape((1, HOP_SIZE), out)?,

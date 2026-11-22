@@ -35,7 +35,8 @@ fn noisy_tone(len: usize) -> Vec<f32> {
 fn real_time_factor(backend: &mut OnnxBackend) -> Result<f64, BackendError> {
     let input = noisy_tone(BLOCK_SAMPLES * (WARMUP_BLOCKS + TIMED_SECONDS));
     let mut output = vec![0.0; BLOCK_SAMPLES];
-    let mut blocks = input.chunks_exact(BLOCK_SAMPLES);
+    let (blocks, _) = input.as_chunks::<BLOCK_SAMPLES>();
+    let mut blocks = blocks.iter();
     for block in blocks.by_ref().take(WARMUP_BLOCKS) {
         backend.process(block, &mut output)?;
     }

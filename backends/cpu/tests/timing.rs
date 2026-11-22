@@ -14,7 +14,8 @@ fn milliseconds_per_frame(model: Model) -> Result<f64, BackendError> {
     let mut backend = CpuBackend::create(model, Workload::Realtime, Path::new("/nonexistent"))?;
     let speech = NoisySpeech::new();
     let mut output = vec![0.0; FRAME_LEN];
-    let mut frames = speech.noisy.chunks_exact(FRAME_LEN);
+    let (frames, _) = speech.noisy.as_chunks::<FRAME_LEN>();
+    let mut frames = frames.iter();
     for frame in frames.by_ref().take(WARMUP_FRAMES) {
         backend.process(frame, &mut output)?;
     }
